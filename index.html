@@ -103,7 +103,7 @@
                 <div class="trophy">🏆</div>
                 <h1>The Masters 2026</h1>
                 <div class="subtitle">April 9-12 · Augusta National Golf Club, Augusta GA</div>
-                <div class="info">$50 Entry · Best 6 of 9 Scoring · Venmo @Jake-Moline-1</div>
+                <div class="info">$30 Entry · Best 6 of 9 Scoring · Venmo @Jake-Moline-1</div>
             </div>
         </div>
         <div class="tabs">
@@ -310,10 +310,10 @@
                 <div class="rules-box">
                     <h3>📋 Pool Format & Rules</h3>
                     <ul>
-                        <li><strong>Entry Fee:</strong> $50 per person (Venmo @Jake-Moline-1)</li>
+                        <li><strong>Entry Fee:</strong> $30 per person (Venmo @Jake-Moline-1)</li>
                         <li><strong>Pick 9 Golfers:</strong> 1 from each of Groups 1-6, plus 3 Wild Cards</li>
-                        <li><strong>Scoring:</strong> Best 6 of 9 golfers count toward your total</li>
-                        <li><strong>Scoring System:</strong> Sum of your best 6 golfers' scores relative to par</li>
+                        <li><strong>Scoring:</strong> Your 9 golfers' scores are ranked best to worst. The best 6 scores overall — regardless of which group they came from — are added together to compute your total team score relative to par. Lower is better.</li>
+                        <li><strong>Did Not Finish:</strong> If a golfer does not complete the tournament for any reason after picks are locked (missed cut, withdrawal, disqualification, etc.), that golfer's score cannot be used as one of your 6 counting scores and is automatically excluded.</li>
                         <li><strong>Missed Cuts:</strong> Golfers who miss the cut = +30 per round (rounds 3 & 4 = +60 total)</li>
                         <li><strong>Tiebreaker:</strong> Predicted winning score (closest wins)</li>
                         <li><strong>No Duplicates:</strong> You cannot pick the same golfer multiple times</li>
@@ -443,7 +443,7 @@
                 participants.push({ name, email, picks, predictedScore });
             }
             saveData();
-            alert("Picks submitted successfully! Don't forget to Venmo $50 to @Jake-Moline-1.");
+            alert("Picks submitted successfully! Don't forget to Venmo $30 to @Jake-Moline-1.");
             document.getElementById('name').value = '';
             document.getElementById('email').value = '';
             Object.keys(picks).forEach(key => { document.getElementById(key).value = ''; });
@@ -587,7 +587,7 @@
                         <div class="admin-controls">
                             <button onclick="clearAllScores()">Clear All Scores</button>
                             <button onclick="downloadBackup()">💾 Download Backup</button>
-                            <button onclick="downloadExcel()">📊 Download Excel (Participants)</button>
+                            <button onclick="downloadExcel()">📊 Download CSV (Google Sheets)</button>
                         </div>
                     </div>
                 ` : `
@@ -743,7 +743,7 @@
                 ${isAdmin ? `
                     <div class="admin-section">
                         <button onclick="downloadBackup()">💾 Download Backup</button>
-                        <button onclick="downloadExcel()">📊 Download Excel (Participants)</button>
+                        <button onclick="downloadExcel()">📊 Download CSV (Google Sheets)</button>
                     </div>
                 ` : ''}
                 ${groupData.map(({ group, sorted, total }) => `
