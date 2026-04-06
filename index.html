@@ -259,7 +259,7 @@
                             missedCuts = currentData[0].value.missedCuts || [];
                             renderAllPicks();
                             renderLeaderboard();
-                            return;
+                            return false;
                         }
                     }
                 }
@@ -274,9 +274,19 @@
                     },
                     body: JSON.stringify({ value: poolData })
                 });
-                if (response.ok) { console.log('✅ Data saved successfully'); }
+                if (response.ok) {
+                    console.log('✅ Data saved successfully');
+                    return true;
+                } else {
+                    const errText = await response.text();
+                    console.error('❌ Save failed:', response.status, errText);
+                    alert(`❌ SAVE FAILED\n\nYour picks could not be saved to the database (HTTP ${response.status}).\n\nPlease try submitting again. If this keeps happening, contact Jake.`);
+                    return false;
+                }
             } catch (error) {
                 console.error('Error saving data:', error);
+                alert(`❌ SAVE FAILED\n\nYour picks could not be saved. This may be a network issue.\n\nPlease try submitting again. If this keeps happening, contact Jake.`);
+                return false;
             }
         }
 
@@ -425,7 +435,7 @@
             `;
         }
 
-        function submitPicks() {
+        async function submitPicks() {
             const name = document.getElementById('name').value.trim();
             const email = document.getElementById('email').value.trim();
             const picks = {
@@ -457,8 +467,13 @@
             } else {
                 participants.push({ name, email, picks, predictedScore });
             }
-            saveData();
-            alert("Picks submitted successfully! Don't forget to Venmo $30 to @Jake-Moline-1.");
+            const saved = await saveData();
+            if (saved) {
+                alert("✅ Picks submitted successfully!\n\nYour picks have been saved. Don't forget to Venmo $30 to @Jake-Moline-1.");
+            } else {
+                // saveData already showed an error alert - don't clear the form so they can retry
+                return;
+            }
             document.getElementById('name').value = '';
             document.getElementById('email').value = '';
             Object.keys(picks).forEach(key => { document.getElementById(key).value = ''; });
