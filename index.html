@@ -263,22 +263,7 @@
                         }
                     }
                 }
-                // Always fetch latest paidStatus from DB before saving
-                // so participant submissions never overwrite admin paid status changes
-                let latestPaidStatus = paidStatus;
-                try {
-                    const latestRes = await fetch(`${SUPABASE_URL}/rest/v1/pool_data?key=eq.${DATABASE_KEY}`, {
-                        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
-                    });
-                    if (latestRes.ok) {
-                        const latestData = await latestRes.json();
-                        if (latestData && latestData.length > 0 && latestData[0].value.paidStatus) {
-                            latestPaidStatus = latestData[0].value.paidStatus;
-                        }
-                    }
-                } catch(e) { console.warn('Could not fetch latest paidStatus, using local copy'); }
-
-                const poolData = { participants, golferScores, missedCuts, paidStatus: latestPaidStatus };
+                const poolData = { participants, golferScores, missedCuts, paidStatus };
                 const response = await fetch(`${SUPABASE_URL}/rest/v1/pool_data?key=eq.${DATABASE_KEY}`, {
                     method: 'PATCH',
                     headers: {
@@ -742,8 +727,29 @@
 
         async function togglePaid(name) {
             if (!isAdmin) return;
+            // Fetch the absolute latest paidStatus first, apply change, then save just paidStatus
+            try {
+                const latestRes = await fetch(`${SUPABASE_URL}/rest/v1/pool_data?key=eq.${DATABASE_KEY}`, {
+                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+                });
+                if (latestRes.ok) {
+                    const latestData = await latestRes.json();
+                    if (latestData && latestData.length > 0) {
+                        // Use latest full data as base to avoid stale overwrites
+                        const latest = latestData[0].value;
+                        participants = latest.participants || participants;
+                        golferScores = latest.golferScores || golferScores;
+                        missedCuts = latest.missedCuts || missedCuts;
+                        paidStatus = latest.paidStatus || {};
+                    }
+                }
+            } catch(e) { console.warn('Could not fetch latest data before toggling paid'); }
+            // Now apply the toggle on top of the freshest data
             paidStatus[name] = !paidStatus[name];
-            await saveData();
+            const saved = await saveData();
+            if (saved) {
+                console.log(`✅ Paid status toggled for ${name}: ${paidStatus[name]}`);
+            }
             renderLeaderboard();
         }
 
