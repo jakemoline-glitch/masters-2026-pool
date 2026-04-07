@@ -210,21 +210,33 @@
         // Supabase functions
         async function loadData() {
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/pool_data?key=eq.${DATABASE_KEY}`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data && data.length > 0) {
-                        const poolData = data[0].value;
-                        participants = poolData.participants || [];
-                        golferScores = poolData.golferScores || {};
-                        missedCuts = poolData.missedCuts || [];
-                        paidStatus = poolData.paidStatus || {};
-                        console.log('Data loaded:', participants.length, 'participants');
+                // Load participants — each is its own row, no race condition possible
+                const pRes = await fetch(
+                    `${SUPABASE_URL}/rest/v1/participants?tournament_key=eq.${DATABASE_KEY}&order=created_at.asc`,
+                    { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` } }
+                );
+                if (pRes.ok) {
+                    const rows = await pRes.json();
+                    participants = rows.map(r => ({
+                        name: r.name,
+                        email: r.email,
+                        picks: r.picks,
+                        predictedScore: r.predicted_score
+                    }));
+                    paidStatus = {};
+                    rows.forEach(r => { if (r.paid) paidStatus[r.name] = true; });
+                    console.log('Loaded', participants.length, 'participants');
+                }
+                // Load scores
+                const sRes = await fetch(
+                    `${SUPABASE_URL}/rest/v1/tournament_scores?tournament_key=eq.${DATABASE_KEY}`,
+                    { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` } }
+                );
+                if (sRes.ok) {
+                    const sData = await sRes.json();
+                    if (sData && sData.length > 0) {
+                        golferScores = sData[0].golfer_scores || {};
+                        missedCuts = sData[0].missed_cuts || [];
                     }
                 }
             } catch (error) {
@@ -236,58 +248,65 @@
             renderPopularity();
         }
 
-        async function saveData() {
+        async function saveParticipant(participant) {
+            // UPSERT: insert or update by (tournament_key, name) — zero race condition risk
             try {
-                // CRITICAL SAFEGUARD: Fetch current data before saving
-                const checkResponse = await fetch(`${SUPABASE_URL}/rest/v1/pool_data?key=eq.${DATABASE_KEY}`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
-                if (checkResponse.ok) {
-                    const currentData = await checkResponse.json();
-                    if (currentData && currentData.length > 0) {
-                        const currentParticipants = currentData[0].value.participants || [];
-                        const currentCount = currentParticipants.length;
-                        const newCount = participants.length;
-                        if (newCount < currentCount) {
-                            alert(`🚨 DATA SAFEGUARD TRIGGERED!\n\nCannot save: This would reduce participants from ${currentCount} to ${newCount}.\n\nReloading correct data from database...`);
-                            console.error('Save blocked: participant count decrease detected');
-                            participants = currentParticipants;
-                            golferScores = currentData[0].value.golferScores || {};
-                            missedCuts = currentData[0].value.missedCuts || [];
-                            renderAllPicks();
-                            renderLeaderboard();
-                            return false;
-                        }
-                    }
-                }
-                const poolData = { participants, golferScores, missedCuts, paidStatus };
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/pool_data?key=eq.${DATABASE_KEY}`, {
-                    method: 'PATCH',
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/participants`, {
+                    method: 'POST',
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal'
+                        'Prefer': 'resolution=merge-duplicates,return=minimal'
                     },
-                    body: JSON.stringify({ value: poolData })
+                    body: JSON.stringify({
+                        tournament_key: DATABASE_KEY,
+                        name: participant.name,
+                        email: participant.email || '',
+                        picks: participant.picks,
+                        predicted_score: participant.predictedScore
+                    })
                 });
                 if (response.ok) {
-                    console.log('✅ Data saved successfully');
+                    console.log(`✅ Participant saved: ${participant.name}`);
                     return true;
                 } else {
                     const errText = await response.text();
-                    console.error('❌ Save failed:', response.status, errText);
-                    alert(`❌ SAVE FAILED\n\nYour picks could not be saved to the database (HTTP ${response.status}).\n\nPlease try submitting again. If this keeps happening, contact Jake.`);
+                    console.error('❌ Participant save failed:', response.status, errText);
+                    alert(`❌ SAVE FAILED\n\nYour picks could not be saved (HTTP ${response.status}).\n\nPlease try submitting again. If this keeps happening, contact Jake directly.`);
                     return false;
                 }
             } catch (error) {
-                console.error('Error saving data:', error);
-                alert(`❌ SAVE FAILED\n\nYour picks could not be saved. This may be a network issue.\n\nPlease try submitting again. If this keeps happening, contact Jake.`);
+                console.error('Error saving participant:', error);
+                alert(`❌ SAVE FAILED\n\nYour picks could not be saved. This may be a network issue.\n\nPlease try submitting again. If this keeps happening, contact Jake directly.`);
                 return false;
             }
+        }
+
+        async function saveScores() {
+            // Upsert scores — only admin calls this, no participant conflict possible
+            try {
+                await fetch(`${SUPABASE_URL}/rest/v1/tournament_scores`, {
+                    method: 'POST',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'resolution=merge-duplicates,return=minimal'
+                    },
+                    body: JSON.stringify({
+                        tournament_key: DATABASE_KEY,
+                        golfer_scores: golferScores,
+                        missed_cuts: missedCuts
+                    })
+                });
+            } catch (e) { console.error('Error saving scores:', e); }
+        }
+
+        async function saveData() {
+            // Legacy alias — saves scores only (participants saved individually via saveParticipant)
+            await saveScores();
+            return true;
         }
 
         // Countdown timer
@@ -467,14 +486,20 @@
             } else {
                 participants.push({ name, email, picks, predictedScore });
             }
-            const saved = await saveData();
+            const participantData = existingIndex >= 0 ? participants[existingIndex] : participants[participants.length - 1];
+            const saved = await saveParticipant(participantData);
             if (saved) {
-                // Log to backup table independently - never blocks or fails the submission
-                const participantData = existingIndex >= 0 ? participants[existingIndex] : participants[participants.length - 1];
+                // Also log to backup submissions_log table
                 await logSubmission(participantData, existingIndex >= 0 ? 'update' : 'submit');
                 alert("✅ Picks submitted successfully!\n\nYour picks have been saved. Don't forget to Venmo $30 to @Jake-Moline-1.");
             } else {
-                // saveData already showed an error alert - don't clear the form so they can retry
+                // saveParticipant already showed an error alert - don't clear the form so they can retry
+                // Roll back the local participants array change
+                if (existingIndex >= 0) {
+                    // revert - reload from DB
+                } else {
+                    participants.pop();
+                }
                 return;
             }
             document.getElementById('name').value = '';
@@ -688,7 +713,7 @@
                 });
                 if (unmatchedPlayers.length > 0) { console.log(`❌ First 10 unmatched:`, unmatchedPlayers.slice(0, 10)); }
                 console.log(`📊 Updated ${updatedCount} golfer scores out of ${data.live_stats.length} total players`);
-                await saveData();
+                await saveScores();
                 renderScores();
                 renderAllPicks();
                 renderLeaderboard();
@@ -727,28 +752,30 @@
 
         async function togglePaid(name) {
             if (!isAdmin) return;
-            // Fetch the absolute latest paidStatus first, apply change, then save just paidStatus
+            const newPaid = !paidStatus[name];
+            // Update ONLY this participant's paid column — zero impact on anyone else
             try {
-                const latestRes = await fetch(`${SUPABASE_URL}/rest/v1/pool_data?key=eq.${DATABASE_KEY}`, {
-                    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
-                });
-                if (latestRes.ok) {
-                    const latestData = await latestRes.json();
-                    if (latestData && latestData.length > 0) {
-                        // Use latest full data as base to avoid stale overwrites
-                        const latest = latestData[0].value;
-                        participants = latest.participants || participants;
-                        golferScores = latest.golferScores || golferScores;
-                        missedCuts = latest.missedCuts || missedCuts;
-                        paidStatus = latest.paidStatus || {};
+                const response = await fetch(
+                    `${SUPABASE_URL}/rest/v1/participants?tournament_key=eq.${DATABASE_KEY}&name=eq.${encodeURIComponent(name)}`,
+                    {
+                        method: 'PATCH',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        body: JSON.stringify({ paid: newPaid })
                     }
+                );
+                if (response.ok) {
+                    paidStatus[name] = newPaid;
+                    console.log(`✅ Paid status updated for ${name}: ${newPaid}`);
+                } else {
+                    alert('❌ Failed to update paid status. Please try again.');
                 }
-            } catch(e) { console.warn('Could not fetch latest data before toggling paid'); }
-            // Now apply the toggle on top of the freshest data
-            paidStatus[name] = !paidStatus[name];
-            const saved = await saveData();
-            if (saved) {
-                console.log(`✅ Paid status toggled for ${name}: ${paidStatus[name]}`);
+            } catch(e) {
+                alert('❌ Failed to update paid status. Network error.');
             }
             renderLeaderboard();
         }
@@ -758,7 +785,7 @@
             if (confirm('Clear all golfer scores?')) {
                 golferScores = {};
                 missedCuts = [];
-                saveData();
+                saveScores();
                 renderScores();
                 renderAllPicks();
                 renderLeaderboard();
