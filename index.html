@@ -249,15 +249,16 @@
         }
 
         async function saveParticipant(participant) {
-            // UPSERT: insert or update by (tournament_key, name) — zero race condition risk
+            // UPSERT via Supabase: POST with on_conflict param — zero race condition risk
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/participants`, {
+                const url = `${SUPABASE_URL}/rest/v1/participants?on_conflict=tournament_key,name`;
+                const response = await fetch(url, {
                     method: 'POST',
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
                         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         'Content-Type': 'application/json',
-                        'Prefer': 'resolution=merge-duplicates,return=minimal'
+                        'Prefer': 'resolution=merge-duplicates,return=representation'
                     },
                     body: JSON.stringify({
                         tournament_key: DATABASE_KEY,
@@ -267,18 +268,18 @@
                         predicted_score: participant.predictedScore
                     })
                 });
+                const responseText = await response.text();
                 if (response.ok) {
-                    console.log(`✅ Participant saved: ${participant.name}`);
+                    console.log(`✅ Participant saved: ${participant.name}`, responseText);
                     return true;
                 } else {
-                    const errText = await response.text();
-                    console.error('❌ Participant save failed:', response.status, errText);
-                    alert(`❌ SAVE FAILED\n\nYour picks could not be saved (HTTP ${response.status}).\n\nPlease try submitting again. If this keeps happening, contact Jake directly.`);
+                    console.error('❌ Participant save failed:', response.status, responseText);
+                    alert(`❌ SAVE FAILED\n\nYour picks could not be saved (HTTP ${response.status}).\n\nPlease screenshot this and send to Jake: ${responseText.substring(0,200)}`);
                     return false;
                 }
             } catch (error) {
                 console.error('Error saving participant:', error);
-                alert(`❌ SAVE FAILED\n\nYour picks could not be saved. This may be a network issue.\n\nPlease try submitting again. If this keeps happening, contact Jake directly.`);
+                alert(`❌ SAVE FAILED\n\nYour picks could not be saved. This may be a network issue.\n\nPlease try submitting again or contact Jake directly.`);
                 return false;
             }
         }
@@ -286,7 +287,7 @@
         async function saveScores() {
             // Upsert scores — only admin calls this, no participant conflict possible
             try {
-                await fetch(`${SUPABASE_URL}/rest/v1/tournament_scores`, {
+                await fetch(`${SUPABASE_URL}/rest/v1/tournament_scores?on_conflict=tournament_key`, {
                     method: 'POST',
                     headers: {
                         'apikey': SUPABASE_ANON_KEY,
