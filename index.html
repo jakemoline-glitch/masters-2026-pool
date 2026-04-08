@@ -173,6 +173,7 @@
         let participants = [];
         let golferScores = {};
         let missedCuts = [];
+        let withdrawals = []; // WD or DQ after picks locked → score of 999
         let isAdmin = sessionStorage.getItem('apiAdmin') === 'true';
         let paidStatus = {}; // { participantName: true/false }
         let autoRefreshInterval = null;
@@ -237,6 +238,7 @@
                     if (sData && sData.length > 0) {
                         golferScores = sData[0].golfer_scores || {};
                         missedCuts = sData[0].missed_cuts || [];
+                        withdrawals = sData[0].withdrawals || [];
                     }
                 }
             } catch (error) {
@@ -298,7 +300,8 @@
                     body: JSON.stringify({
                         tournament_key: DATABASE_KEY,
                         golfer_scores: golferScores,
-                        missed_cuts: missedCuts
+                        missed_cuts: missedCuts,
+                        withdrawals: withdrawals
                     })
                 });
             } catch (e) { console.error('Error saving scores:', e); }
@@ -539,7 +542,8 @@
                     const golfer = p.picks[key];
                     const score = golferScores[golfer];
                     const isMC = missedCuts.includes(golfer);
-                    return { golfer, score, isMC, group: key };
+                    const isWD = withdrawals.includes(golfer);
+                    return { golfer, score, isMC, isWD, group: key };
                 });
                 return `
                     <div class="participant-card">
@@ -553,7 +557,7 @@
                                     <div class="pick-label">${s.group.replace(/(\d)/, ' $1').toUpperCase()}</div>
                                     <div class="pick-value">
                                         ${s.golfer}
-                                        ${s.score !== undefined ? `<span class="golfer-score ${s.isMC ? 'missed-cut' : ''}">${s.isMC ? 'MC' : (s.score > 0 ? '+' : '') + s.score}</span>` : ''}
+                                        ${s.isWD ? '<span class="golfer-score missed-cut">WD/DQ</span>' : s.isMC ? '<span class="golfer-score missed-cut">MC</span>' : s.score !== undefined ? `<span class="golfer-score">${(s.score > 0 ? '+' : '') + s.score}</span>` : ''}
                                     </div>
                                 </div>
                             `).join('')}
@@ -613,13 +617,21 @@
         }
 
         // Calculate score
+        function getGolferScore(golfer) {
+            // Withdrawal or DQ after picks locked → 999 (excluded from best 6)
+            if (withdrawals.includes(golfer)) return 999;
+            // Missed cut → +60
+            if (missedCuts.includes(golfer)) return 60;
+            // Has a live score → use it
+            if (golferScores[golfer] !== undefined) return golferScores[golfer];
+            // Hasn't teed off yet → null (not counted)
+            return null;
+        }
+
         function calculateScore(participant) {
-            const scores = Object.values(participant.picks).map(golfer => {
-                if (missedCuts.includes(golfer)) {
-                    return 60; // MC = +30 for rounds 3 & 4
-                }
-                return golferScores[golfer] !== undefined ? golferScores[golfer] : 999;
-            });
+            const scores = Object.values(participant.picks)
+                .map(golfer => getGolferScore(golfer))
+                .filter(s => s !== null); // exclude golfers who haven't teed off
             scores.sort((a, b) => a - b);
             const best6 = scores.slice(0, 6);
             return best6.reduce((sum, s) => sum + s, 0);
@@ -628,11 +640,17 @@
         function getBest6Golfers(participant) {
             const scores = Object.keys(participant.picks).map(key => {
                 const golfer = participant.picks[key];
-                const score = missedCuts.includes(golfer) ? 60 : (golferScores[golfer] !== undefined ? golferScores[golfer] : 999);
+                const score = getGolferScore(golfer);
                 return { golfer, score };
             });
-            scores.sort((a, b) => a.score - b.score);
-            return scores.slice(0, 6);
+            // Put null (not teed off) at the end, then sort by score
+            scores.sort((a, b) => {
+                if (a.score === null && b.score === null) return 0;
+                if (a.score === null) return 1;
+                if (b.score === null) return -1;
+                return a.score - b.score;
+            });
+            return scores.slice(0, 6).filter(g => g.score !== null);
         }
 
         // Scores display
@@ -649,6 +667,7 @@
                         <button onclick="fetchLiveScores(true)">⚡ Fetch Live Scores Now</button>
                         <div class="admin-controls">
                             <button onclick="clearAllScores()">Clear All Scores</button>
+                            <button onclick="markWithdrawal()">🚫 Mark WD/DQ</button>
                             <button onclick="downloadBackup()">💾 Download Backup</button>
                             <button onclick="downloadExcel()">📊 Download CSV (Google Sheets)</button>
                         </div>
@@ -666,7 +685,13 @@
                             ${golferList.map(golfer => {
                                 const score = golferScores[golfer];
                                 const isMC = missedCuts.includes(golfer);
-                                return `<tr><td>${golfer}</td><td>${score !== undefined ? ((score > 0 ? '+' : '') + score) : '-'}</td><td>${isMC ? '❌ MC' : (score !== undefined ? '✓' : '-')}</td></tr>`;
+                                const isWD = withdrawals.includes(golfer);
+                                let status = '-';
+                                let scoreDisplay = '-';
+                                if (isWD) { status = '🚫 WD/DQ'; scoreDisplay = '+999'; }
+                                else if (isMC) { status = '❌ MC'; scoreDisplay = '+60'; }
+                                else if (score !== undefined) { status = '✓ Active'; scoreDisplay = (score > 0 ? '+' : '') + score; }
+                                return `<tr><td>${golfer}</td><td>${scoreDisplay}</td><td>${status}</td></tr>`;
                             }).join('')}
                         </tbody>
                     </table>
@@ -786,10 +811,36 @@
             if (confirm('Clear all golfer scores?')) {
                 golferScores = {};
                 missedCuts = [];
+                withdrawals = [];
                 saveScores();
                 renderScores();
                 renderAllPicks();
                 renderLeaderboard();
+            }
+        }
+
+        function markWithdrawal() {
+            if (!isAdmin) return;
+            const name = prompt('Enter golfer name to mark as WD/DQ (exact spelling):');
+            if (!name || !name.trim()) return;
+            const trimmed = name.trim();
+            if (!withdrawals.includes(trimmed)) {
+                withdrawals.push(trimmed);
+                // Also remove from missedCuts if they were there
+                missedCuts = missedCuts.filter(g => g !== trimmed);
+                saveScores();
+                renderScores();
+                renderAllPicks();
+                renderLeaderboard();
+                alert(`✅ ${trimmed} marked as WD/DQ — their score is now +999 and excluded from best 6.`);
+            } else {
+                if (confirm(`${trimmed} is already marked WD/DQ. Remove this designation?`)) {
+                    withdrawals = withdrawals.filter(g => g !== trimmed);
+                    saveScores();
+                    renderScores();
+                    renderAllPicks();
+                    renderLeaderboard();
+                }
             }
         }
 
@@ -846,7 +897,8 @@
                 return;
             }
             if (participants.length === 0) { container.innerHTML = '<div class="alert alert-info">No picks yet.</div>'; return; }
-            const groups = ['group1', 'group2', 'group3', 'group4', 'group5', 'group6', 'wildcard1', 'wildcard2', 'wildcard3'];
+            // Groups 1-6 as individual charts; all 3 wildcards combined into 1
+            const groups = ['group1', 'group2', 'group3', 'group4', 'group5', 'group6'];
             const groupData = groups.map(group => {
                 const counts = {};
                 participants.forEach(p => {
@@ -857,6 +909,17 @@
                 const total = sorted.reduce((s, [, c]) => s + c, 0);
                 return { group, sorted, total };
             });
+            // Combine wildcard1 + wildcard2 + wildcard3 into one chart
+            const wcCounts = {};
+            participants.forEach(p => {
+                ['wildcard1', 'wildcard2', 'wildcard3'].forEach(wk => {
+                    const golfer = p.picks[wk];
+                    if (golfer) wcCounts[golfer] = (wcCounts[golfer] || 0) + 1;
+                });
+            });
+            const wcSorted = Object.entries(wcCounts).sort((a, b) => b[1] - a[1]);
+            const wcTotal = wcSorted.reduce((s, [, c]) => s + c, 0);
+            groupData.push({ group: 'wildcard', sorted: wcSorted, total: wcTotal });
 
             container.innerHTML = `
                 ${isAdmin ? `
@@ -867,7 +930,7 @@
                 ` : ''}
                 ${groupData.map(({ group, sorted, total }) => `
                     <div class="chart-container">
-                        <div class="chart-title">${group.replace(/(\d)/, ' $1').toUpperCase()}</div>
+                        <div class="chart-title">${group === 'wildcard' ? 'WILD CARDS (ALL 3 PICKS COMBINED)' : group.replace(/(\d)/, ' $1').toUpperCase()}</div>
                         <div class="pie-wrap">
                             <canvas id="pie-${group}" class="pie-canvas" width="160" height="160"></canvas>
                             <div class="pie-legend">
