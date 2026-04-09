@@ -671,6 +671,8 @@
                         <div class="admin-controls">
                             <button onclick="clearAllScores()">Clear All Scores</button>
                             <button onclick="markWithdrawal()">🚫 Mark WD/DQ</button>
+                            <button onclick="adminAddParticipant()">➕ Add Participant</button>
+                            <button onclick="adminEditTiebreaker()">✏️ Edit Tiebreaker</button>
                             <button onclick="downloadBackup()">💾 Download Backup</button>
                             <button onclick="downloadExcel()">📊 Download CSV (Google Sheets)</button>
                         </div>
@@ -851,6 +853,94 @@
                 renderScores();
                 renderAllPicks();
                 renderLeaderboard();
+            }
+        }
+
+        async function adminAddParticipant() {
+            if (!isAdmin) return;
+            const name = prompt('Enter participant name:');
+            if (!name || !name.trim()) return;
+            const email = prompt('Enter email address (optional):') || '';
+            // Build picks by prompting for each group
+            const groupLabels = {
+                group1: 'Group 1 (Scheffler / McIlroy / DeChambeau / Rahm)',
+                group2: 'Group 2 (Aberg / Schauffele / Young / Fleetwood / Fitzpatrick)',
+                group3: 'Group 3 (Koepka / Morikawa / Spieth / Rose)',
+                group4: 'Group 4 (Gotterup / Matsuyama / MacIntyre / Henley)',
+                group5: 'Group 5 (Reed / Hovland / Si Woo Kim / Min Woo Lee / Thomas / Scott)',
+                group6: 'Group 6 (Bhatia / Burns / Day / Hatton / Knapp / Lowry / Straka)',
+                wildcard1: 'Wild Card 1',
+                wildcard2: 'Wild Card 2',
+                wildcard3: 'Wild Card 3',
+            };
+            const picks = {};
+            for (const [key, label] of Object.entries(groupLabels)) {
+                const pick = prompt(`${label}:\nEnter golfer name (exact spelling):`);
+                if (!pick || !pick.trim()) { alert('Cancelled — no entry added.'); return; }
+                picks[key] = pick.trim();
+            }
+            const tbInput = prompt('Predicted winning score (e.g. -15):');
+            const predictedScore = parseInt(tbInput);
+            if (isNaN(predictedScore)) { alert('Invalid tiebreaker score — no entry added.'); return; }
+
+            const participant = { name: name.trim(), email: email.trim(), picks, predictedScore };
+            // Add to local state
+            const existingIdx = participants.findIndex(p => p.name.toLowerCase() === participant.name.toLowerCase());
+            if (existingIdx >= 0) {
+                if (!confirm(`${participant.name} already exists. Overwrite their picks?`)) return;
+                participants[existingIdx] = participant;
+            } else {
+                participants.push(participant);
+            }
+            const saved = await saveParticipant(participant);
+            if (saved) {
+                await logSubmission(participant, 'admin-add');
+                renderAllPicks();
+                renderLeaderboard();
+                renderPopularity();
+                alert(`✅ ${participant.name} has been added to the pool.`);
+            } else {
+                // Roll back local state
+                participants = participants.filter(p => p.name !== participant.name);
+            }
+        }
+
+        async function adminEditTiebreaker() {
+            if (!isAdmin) return;
+            const name = prompt('Enter the participant name to edit tiebreaker (exact spelling):');
+            if (!name || !name.trim()) return;
+            const idx = participants.findIndex(p => p.name.toLowerCase() === name.trim().toLowerCase());
+            if (idx < 0) { alert(`No participant found with name: ${name.trim()}`); return; }
+            const current = participants[idx].predictedScore;
+            const newScore = prompt(`Current tiebreaker for ${participants[idx].name}: ${current > 0 ? '+' : ''}${current}\n\nEnter new predicted score (e.g. -15):`);
+            if (newScore === null) return;
+            const parsed = parseInt(newScore);
+            if (isNaN(parsed)) { alert('Invalid score — no change made.'); return; }
+            participants[idx].predictedScore = parsed;
+            try {
+                const response = await fetch(
+                    `${SUPABASE_URL}/rest/v1/participants?tournament_key=eq.${DATABASE_KEY}&name=eq.${encodeURIComponent(participants[idx].name)}`,
+                    {
+                        method: 'PATCH',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        body: JSON.stringify({ predicted_score: parsed })
+                    }
+                );
+                if (response.ok) {
+                    renderLeaderboard();
+                    alert(`✅ Tiebreaker for ${participants[idx].name} updated to ${parsed > 0 ? '+' : ''}${parsed}.`);
+                } else {
+                    participants[idx].predictedScore = current; // revert
+                    alert('❌ Failed to update tiebreaker. Please try again.');
+                }
+            } catch(e) {
+                participants[idx].predictedScore = current; // revert
+                alert('❌ Network error. Please try again.');
             }
         }
 
