@@ -858,38 +858,88 @@
             }
         }
 
-        async function adminAddParticipant() {
+        function adminAddParticipant() {
             if (!isAdmin) return;
-            const name = prompt('Enter participant name:');
-            if (!name || !name.trim()) return;
-            const email = prompt('Enter email address (optional):') || '';
-            // Build picks by prompting for each group
-            const groupLabels = {
-                group1: 'Group 1 (Scheffler / McIlroy / DeChambeau / Rahm)',
-                group2: 'Group 2 (Aberg / Schauffele / Young / Fleetwood / Fitzpatrick)',
-                group3: 'Group 3 (Koepka / Morikawa / Spieth / Rose)',
-                group4: 'Group 4 (Gotterup / Matsuyama / MacIntyre / Henley)',
-                group5: 'Group 5 (Reed / Hovland / Si Woo Kim / Min Woo Lee / Thomas / Scott)',
-                group6: 'Group 6 (Bhatia / Burns / Day / Hatton / Knapp / Lowry / Straka)',
-                wildcard1: 'Wild Card 1',
-                wildcard2: 'Wild Card 2',
-                wildcard3: 'Wild Card 3',
-            };
-            const picks = {};
-            for (const [key, label] of Object.entries(groupLabels)) {
-                const pick = prompt(`${label}:\nEnter golfer name (exact spelling):`);
-                if (!pick || !pick.trim()) { alert('Cancelled — no entry added.'); return; }
-                picks[key] = pick.trim();
-            }
-            const tbInput = prompt('Predicted winning score (e.g. -15):');
-            const predictedScore = parseInt(tbInput);
-            if (isNaN(predictedScore)) { alert('Invalid tiebreaker score — no entry added.'); return; }
+            // Build modal HTML with dropdowns for each group
+            const modalHtml = `
+                <div id="admin-add-modal" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;overflow-y:auto;">
+                    <div style="background:white;max-width:560px;margin:40px auto;border-radius:16px;padding:30px;box-shadow:0 20px 60px rgba(0,0,0,0.4);">
+                        <h2 style="color:#1a5c1a;margin-bottom:20px;font-size:1.4em;">➕ Add Participant</h2>
+                        <div style="margin-bottom:14px;">
+                            <label style="font-weight:600;display:block;margin-bottom:6px;">Name *</label>
+                            <input type="text" id="ap-name" placeholder="Full name" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;">
+                        </div>
+                        <div style="margin-bottom:14px;">
+                            <label style="font-weight:600;display:block;margin-bottom:6px;">Email</label>
+                            <input type="email" id="ap-email" placeholder="email@example.com" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;">
+                        </div>
+                        ${['group1','group2','group3','group4','group5','group6'].map(g => `
+                        <div style="margin-bottom:14px;">
+                            <label style="font-weight:600;display:block;margin-bottom:6px;">${g.replace(/(\d)/,' $1').toUpperCase()}</label>
+                            <select id="ap-${g}" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;">
+                                <option value="">Select golfer...</option>
+                                ${golferGroups[g].map(p => `<option value="${p}">${p}</option>`).join('')}
+                            </select>
+                        </div>`).join('')}
+                        <div style="margin-bottom:14px;">
+                            <label style="font-weight:600;display:block;margin-bottom:6px;">WILD CARD 1</label>
+                            <select id="ap-wildcard1" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;">
+                                <option value="">Select golfer...</option>
+                                ${golferGroups.wildcard.map(p => `<option value="${p}">${p}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div style="margin-bottom:14px;">
+                            <label style="font-weight:600;display:block;margin-bottom:6px;">WILD CARD 2</label>
+                            <select id="ap-wildcard2" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;">
+                                <option value="">Select golfer...</option>
+                                ${golferGroups.wildcard.map(p => `<option value="${p}">${p}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div style="margin-bottom:14px;">
+                            <label style="font-weight:600;display:block;margin-bottom:6px;">WILD CARD 3</label>
+                            <select id="ap-wildcard3" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;">
+                                <option value="">Select golfer...</option>
+                                ${golferGroups.wildcard.map(p => `<option value="${p}">${p}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div style="margin-bottom:20px;">
+                            <label style="font-weight:600;display:block;margin-bottom:6px;">Predicted Winning Score (e.g. -15)</label>
+                            <input type="number" id="ap-score" placeholder="-15" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;">
+                        </div>
+                        <div style="display:flex;gap:12px;">
+                            <button onclick="adminAddParticipantSubmit()" style="flex:1;background:linear-gradient(135deg,#1a5c1a,#0a3a0a);color:white;padding:14px;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;">✅ Save Entry</button>
+                            <button onclick="document.getElementById('admin-add-modal').remove()" style="flex:1;background:linear-gradient(135deg,#999,#666);color:white;padding:14px;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;">Cancel</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+        }
 
-            const participant = { name: name.trim(), email: email.trim(), picks, predictedScore };
-            // Add to local state
-            const existingIdx = participants.findIndex(p => p.name.toLowerCase() === participant.name.toLowerCase());
+        async function adminAddParticipantSubmit() {
+            const name = document.getElementById('ap-name').value.trim();
+            const email = document.getElementById('ap-email').value.trim();
+            if (!name) { alert('Please enter a name.'); return; }
+            const picks = {
+                group1: document.getElementById('ap-group1').value,
+                group2: document.getElementById('ap-group2').value,
+                group3: document.getElementById('ap-group3').value,
+                group4: document.getElementById('ap-group4').value,
+                group5: document.getElementById('ap-group5').value,
+                group6: document.getElementById('ap-group6').value,
+                wildcard1: document.getElementById('ap-wildcard1').value,
+                wildcard2: document.getElementById('ap-wildcard2').value,
+                wildcard3: document.getElementById('ap-wildcard3').value,
+            };
+            for (const [key, val] of Object.entries(picks)) {
+                if (!val) { alert(`Please select a golfer for ${key.replace(/(\d)/,' $1')}.`); return; }
+            }
+            const scoreVal = parseInt(document.getElementById('ap-score').value);
+            if (isNaN(scoreVal)) { alert('Please enter a valid predicted score.'); return; }
+
+            const participant = { name, email, picks, predictedScore: scoreVal };
+            const existingIdx = participants.findIndex(p => p.name.toLowerCase() === name.toLowerCase());
             if (existingIdx >= 0) {
-                if (!confirm(`${participant.name} already exists. Overwrite their picks?`)) return;
+                if (!confirm(`${name} already exists. Overwrite their picks?`)) return;
                 participants[existingIdx] = participant;
             } else {
                 participants.push(participant);
@@ -897,13 +947,13 @@
             const saved = await saveParticipant(participant);
             if (saved) {
                 await logSubmission(participant, 'admin-add');
+                document.getElementById('admin-add-modal').remove();
                 renderAllPicks();
                 renderLeaderboard();
                 renderPopularity();
-                alert(`✅ ${participant.name} has been added to the pool.`);
+                alert(`✅ ${name} has been added to the pool.`);
             } else {
-                // Roll back local state
-                participants = participants.filter(p => p.name !== participant.name);
+                participants = participants.filter(p => p.name !== name);
             }
         }
 
