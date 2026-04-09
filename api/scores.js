@@ -5,36 +5,29 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const API_KEY = process.env.DATAGOLF_API_KEY;
-  if (!API_KEY) return res.status(500).json({ error: 'API key not configured' });
 
   try {
-    // Try Masters-specific endpoint first (DataGolf uses 'pga' tour for majors)
-    // The Masters event_id on DataGolf is 14
-    const response = await fetch(
-      `https://feeds.datagolf.com/preds/live-tournament-stats?tour=pga&stat=total&round=event_avg&display=value&key=${API_KEY}`
-    );
-
-    if (!response.ok) throw new Error(`DataGolf error: ${response.status}`);
-    const data = await response.json();
-
-    // Check if we're getting Masters data
-    if (data.event_name && data.event_name.toLowerCase().includes('master')) {
-      // DataGolf is serving Masters — use it directly
-      return res.status(200).json(data);
+    // Try DataGolf first — if it switches to Masters, use it
+    if (API_KEY) {
+      const dgRes = await fetch(
+        `https://feeds.datagolf.com/preds/live-tournament-stats?tour=pga&stat=total&round=event_avg&display=value&key=${API_KEY}`
+      );
+      if (dgRes.ok) {
+        const dgData = await dgRes.json();
+        if (dgData.event_name && dgData.event_name.toLowerCase().includes('master')) {
+          return res.status(200).json(dgData);
+        }
+      }
     }
 
-    // DataGolf not yet serving Masters — fall back to ESPN
-    // ESPN golf leaderboard for Masters 2026 (event ID 401703520)
+    // Fall back to ESPN
     const espnRes = await fetch(
       'https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?league=pga',
       { headers: { 'User-Agent': 'Mozilla/5.0' } }
     );
-
     if (!espnRes.ok) throw new Error(`ESPN error: ${espnRes.status}`);
     const espnData = await espnRes.json();
 
-    // Parse ESPN golf leaderboard format
-    // ESPN golf returns competitors with scoreToPar field (integer, e.g. -5, 0, +3)
     const live_stats = [];
     const competition = espnData?.events?.[0]?.competitions?.[0];
     const eventName = espnData?.events?.[0]?.name || 'Masters Tournament';
@@ -42,25 +35,41 @@ export default async function handler(req, res) {
     if (competition) {
       for (const comp of (competition.competitors || [])) {
         const athlete = comp.athlete || {};
-        const lastName = athlete.lastName || '';
-        const firstName = athlete.firstName || '';
-        const player_name = lastName && firstName ? `${lastName}, ${firstName}` : (athlete.displayName || '');
+        const displayName = athlete.displayName || '';
+        const player_name = displayName;
 
-        // ESPN golf scoreToPar is the key field — integer relative to par
+        // ESPN returns scoreToPar as a string like "-3", "E", "+2", or null
         let total = null;
-        if (comp.scoreToPar !== undefined && comp.scoreToPar !== null) {
-          total = parseInt(comp.scoreToPar);
-          if (isNaN(total)) total = null;
-        } else if (comp.score !== undefined) {
-          // score field is total strokes — less useful but fallback
-          const s = String(comp.score || '').trim();
-          if (s === 'E') total = 0;
-          else { total = parseInt(s); if (isNaN(total)) total = null; }
+        const stp = comp.scoreToPar;
+        if (stp !== null && stp !== undefined) {
+          const s = String(stp).trim();
+          if (s === 'E' || s === '0') total = 0;
+          else {
+            const parsed = parseInt(s);
+            if (!isNaN(parsed)) total = parsed;
+          }
+        }
+
+        // Also check linescores for cumulative score if scoreToPar not available
+        if (total === null && comp.linescores && comp.linescores.length > 0) {
+          let cumulative = 0;
+          for (const ls of comp.linescores) {
+            const val = ls.value !== undefined ? String(ls.value).trim() : '';
+            if (val === 'E' || val === '0') { /* 0 */ }
+            else if (val !== '' && val !== '--') {
+              const n = parseInt(val);
+              if (!isNaN(n)) cumulative += n;
+            }
+          }
+          // Only use if we have actual scores
+          if (comp.linescores.some(ls => ls.value !== undefined && ls.value !== '--')) {
+            total = cumulative;
+          }
         }
 
         const status = comp.status?.type?.name || '';
         const thru = comp.status?.thru ?? null;
-        let position = comp.status?.position?.displayName || comp.status?.type?.shortDetail || '';
+        let position = comp.status?.position?.displayName || '';
         if (status === 'cut') position = 'CUT';
         if (status === 'wd' || status === 'withdrawn') position = 'WD';
 
