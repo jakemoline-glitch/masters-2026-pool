@@ -195,7 +195,7 @@
 
             // Only run during tournament (Thu-Sun, 8 AM - 8 PM CT)
             const isTournamentDay = dayOfWeek >= 4 || dayOfWeek === 0;
-            const isDuringHours = hour >= 8 && hour < 20;
+            const isDuringHours = hour >= 7 && hour < 22; // 7 AM - 10 PM ET
             const isTournamentActive = now >= TSTART && now <= TEND;
 
             if (isTournamentActive && isTournamentDay && isDuringHours) {
@@ -587,7 +587,7 @@
                             <thead><tr><th>#</th><th>Name</th><th>Status</th><th style="text-align:center;">Payment</th></tr></thead>
                             <tbody>
                                 ${sorted.map((p, i) => `
-                                    <tr><td><strong>${i + 1}</strong></td><td>${p.name}</td><td>✓ Picks submitted</td><td style="text-align:center;">${isAdmin ? `<span class="paid-badge ${paidStatus[p.name] ? 'paid' : 'unpaid'}">${paidStatus[p.name] ? '✓ Paid' : 'Unpaid'}</span><button class="mark-paid-btn" onclick="togglePaid('${p.name.replace(/'/g, "\\'")}')">Mark ${paidStatus[p.name] ? 'Unpaid' : 'Paid'}</button>` : `<span class="paid-badge ${paidStatus[p.name] ? 'paid' : 'unpaid'}">${paidStatus[p.name] ? '✓ Paid' : 'Unpaid'}</span>`}</td></tr>
+                                    <tr><td><strong>${i + 1}</strong></td><td>${p.name}</td><td>✓ Picks submitted</td><td style="text-align:center;">${isAdmin ? `<span class="paid-badge ${paidStatus[p.name] ? 'paid' : 'unpaid'}">${paidStatus[p.name] ? '✓ Paid' : 'Unpaid'}</span><button class="mark-paid-btn" onclick="togglePaid('${p.name.replace(/'/g, "\\'")}')">Mark ${paidStatus[p.name] ? 'Unpaid' : 'Paid'}</button><button class="mark-paid-btn" style="background:linear-gradient(135deg,#c0392b,#7b2d00);margin-left:6px;" onclick="deleteParticipant('${p.name.replace(/'/g, "\\'")}')">🗑 Delete</button>` : `<span class="paid-badge ${paidStatus[p.name] ? 'paid' : 'unpaid'}">${paidStatus[p.name] ? '✓ Paid' : 'Unpaid'}</span>`}</td></tr>
                                 `).join('')}
                             </tbody>
                         </table>
@@ -608,7 +608,10 @@
                                 const paidCell = isAdmin
                                     ? `<span class="paid-badge ${paid ? 'paid' : 'unpaid'}">${paid ? '✓ Paid' : 'Unpaid'}</span><button class="mark-paid-btn" onclick="togglePaid('${p.name.replace(/'/g, "\\'")}')">Mark ${paid ? 'Unpaid' : 'Paid'}</button>`
                                     : `<span class="paid-badge ${paid ? 'paid' : 'unpaid'}">${paid ? '✓ Paid' : 'Unpaid'}</span>`;
-                                return `<tr><td><strong>${i + 1}</strong></td><td>${p.name}</td><td><strong>${p.score}</strong></td><td>${best6.map(g => g.golfer).join(', ')}</td><td style="text-align:center;font-weight:600;color:#e67e22;">${tb}</td><td style="text-align:center;">${paidCell}</td></tr>`;
+                                const deleteBtn = isAdmin
+                                    ? `<button class="mark-paid-btn" style="background:linear-gradient(135deg,#c0392b,#7b2d00);margin-left:6px;" onclick="deleteParticipant('${p.name.replace(/'/g, "\\'")}')">🗑 Delete</button>`
+                                    : '';
+                                return `<tr><td><strong>${i + 1}</strong></td><td>${p.name}</td><td><strong>${p.score}</strong></td><td>${best6.map(g => g.golfer).join(', ')}</td><td style="text-align:center;font-weight:600;color:#e67e22;">${tb}</td><td style="text-align:center;">${paidCell}${deleteBtn}</td></tr>`;
                             }).join('')}
                         </tbody>
                     </table>
@@ -676,7 +679,7 @@
                     <button onclick="adminLogin()" style="margin-bottom: 20px;">Admin Login</button>
                 `}
                 <div class="alert alert-info">
-                    <strong>Live Scores:</strong> Scores update automatically every 5 minutes during tournament hours (8 AM - 8 PM ET, Thu-Sun) for all users.
+                    <strong>Live Scores:</strong> Scores update automatically every 5 minutes during tournament hours (7 AM - 10 PM ET, Thu-Sun) for all users.
                 </div>
                 <div class="leaderboard">
                     <table>
@@ -773,6 +776,38 @@
                 console.log(`✅ Submission logged to backup for ${participant.name}`);
             } catch (err) {
                 console.warn('⚠️ Backup log failed (non-critical):', err);
+            }
+        }
+
+        async function deleteParticipant(name) {
+            if (!isAdmin) return;
+            if (!confirm(`⚠️ Are you sure you want to delete ${name}'s entry?\n\nThis cannot be undone.`)) return;
+            try {
+                const response = await fetch(
+                    `${SUPABASE_URL}/rest/v1/participants?tournament_key=eq.${DATABASE_KEY}&name=eq.${encodeURIComponent(name)}`,
+                    {
+                        method: 'DELETE',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Prefer': 'return=minimal'
+                        }
+                    }
+                );
+                if (response.ok) {
+                    participants = participants.filter(p => p.name !== name);
+                    delete paidStatus[name];
+                    console.log(`✅ Deleted participant: ${name}`);
+                    renderAllPicks();
+                    renderLeaderboard();
+                    renderPopularity();
+                    alert(`✅ ${name}'s entry has been deleted.`);
+                } else {
+                    const errText = await response.text();
+                    alert(`❌ Failed to delete entry: ${errText}`);
+                }
+            } catch(e) {
+                alert('❌ Failed to delete entry. Network error.');
             }
         }
 
