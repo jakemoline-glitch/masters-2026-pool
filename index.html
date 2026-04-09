@@ -712,12 +712,8 @@
                 if (!response.ok) { throw new Error(`HTTP ${response.status}: ${response.statusText}`); }
                 const data = await response.json();
                 console.log('✅ DataGolf response received:', data._event_detected);
-                // Warn if DataGolf is still showing a previous event
-                if (!data._is_masters) {
-                    console.warn('⚠️ DataGolf is still showing:', data._event_detected, '— not Masters yet');
-                    if (showAlert) alert(`⚠️ DataGolf is currently showing "${data._event_detected}" data — Masters scores not available yet. Please try again shortly.`);
-                    return;
-                }
+                // Log which source is serving scores
+                console.log('Score source:', data._source || 'datagolf', '| Event:', data.event_name);
                 console.log('Number of players in live_stats:', data.live_stats?.length || 0);
                 if (data.live_stats && data.live_stats.length > 0) {
                     console.log('Sample DataGolf player names:', data.live_stats.slice(0, 5).map(p => p.player_name));
