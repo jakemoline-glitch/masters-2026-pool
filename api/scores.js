@@ -6,8 +6,11 @@ export default async function handler(req, res) {
 
   const API_KEY = process.env.DATAGOLF_API_KEY;
 
+  // Augusta National hole pars (holes 1-18)
+  const augustaPars = [4,5,4,3,4,3,4,5,4,4,4,3,5,4,5,3,4,4];
+
   try {
-    // Try DataGolf first — if it switches to Masters, use it
+    // Try DataGolf first
     if (API_KEY) {
       const dgRes = await fetch(
         `https://feeds.datagolf.com/preds/live-tournament-stats?tour=pga&stat=total&round=event_avg&display=value&key=${API_KEY}`
@@ -20,7 +23,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // Fall back to ESPN
+    // ESPN fallback
     const espnRes = await fetch(
       'https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?league=pga',
       { headers: { 'User-Agent': 'Mozilla/5.0' } }
@@ -35,36 +38,36 @@ export default async function handler(req, res) {
     if (competition) {
       for (const comp of (competition.competitors || [])) {
         const athlete = comp.athlete || {};
-        const displayName = athlete.displayName || '';
-        const player_name = displayName;
+        const player_name = athlete.displayName || '';
 
-        // ESPN returns scoreToPar as a string like "-3", "E", "+2", or null
+        // First try scoreToPar — ESPN's explicit relative-to-par field
         let total = null;
         const stp = comp.scoreToPar;
-        if (stp !== null && stp !== undefined) {
+        if (stp !== null && stp !== undefined && stp !== '') {
           const s = String(stp).trim();
-          if (s === 'E' || s === '0') total = 0;
+          if (s === 'E') total = 0;
           else {
             const parsed = parseInt(s);
             if (!isNaN(parsed)) total = parsed;
           }
         }
 
-        // Also check linescores for cumulative score if scoreToPar not available
+        // If scoreToPar not available, calculate from linescores using Augusta pars
         if (total === null && comp.linescores && comp.linescores.length > 0) {
-          let cumulative = 0;
-          for (const ls of comp.linescores) {
-            const val = ls.value !== undefined ? String(ls.value).trim() : '';
-            if (val === 'E' || val === '0') { /* 0 */ }
-            else if (val !== '' && val !== '--') {
-              const n = parseInt(val);
-              if (!isNaN(n)) cumulative += n;
+          let scoreRelativeToPar = 0;
+          let hasValidScores = false;
+
+          comp.linescores.forEach((ls, idx) => {
+            const holeStrokes = ls.value !== undefined ? String(ls.value).trim() : '';
+            if (holeStrokes !== '' && holeStrokes !== '--' && !isNaN(parseInt(holeStrokes))) {
+              const strokes = parseInt(holeStrokes);
+              const holePar = augustaPars[idx] || 4; // fallback to par 4
+              scoreRelativeToPar += (strokes - holePar);
+              hasValidScores = true;
             }
-          }
-          // Only use if we have actual scores
-          if (comp.linescores.some(ls => ls.value !== undefined && ls.value !== '--')) {
-            total = cumulative;
-          }
+          });
+
+          if (hasValidScores) total = scoreRelativeToPar;
         }
 
         const status = comp.status?.type?.name || '';
