@@ -611,7 +611,23 @@
                                 const deleteBtn = isAdmin
                                     ? `<button class="mark-paid-btn" style="background:linear-gradient(135deg,#c0392b,#7b2d00);margin-left:6px;" onclick="deleteParticipant('${p.name.replace(/'/g, "\\'")}')">🗑 Delete</button>`
                                     : '';
-                                return `<tr><td><strong>${i + 1}</strong></td><td>${p.name}</td><td><strong>${p.score}</strong></td><td>${best6.map(g => g.golfer).join(', ')}</td><td style="text-align:center;font-weight:600;color:#e67e22;">${tb}</td><td style="text-align:center;">${paidCell}${deleteBtn}</td></tr>`;
+                                // Build full 9-pick display: best 6 green, worst 3 red
+                                const best6Names = new Set(best6.map(g => g.golfer));
+                                const allPicks = Object.values(p.picks).map(golfer => {
+                                    const s = getGolferScore(golfer);
+                                    const scoreStr = s === null ? '—' : (s > 0 ? '+' : '') + s;
+                                    const inBest6 = best6Names.has(golfer);
+                                    return { golfer, scoreStr, inBest6 };
+                                });
+                                // Sort: best 6 first (by score asc), then worst 3
+                                const best6List = allPicks.filter(g => g.inBest6);
+                                const worst3List = allPicks.filter(g => !g.inBest6);
+                                const nameScoreStr = `${p.name} <span style="font-weight:400;color:#555;">(${p.score > 0 ? '+' : ''}${p.score})</span>`;
+                                const picksHtml = [
+                                    ...best6List.map(g => `<span>${g.golfer} (${g.scoreStr})</span>`),
+                                    ...worst3List.map(g => `<span style="color:#c0392b;">${g.golfer} (${g.scoreStr})</span>`)
+                                ].join(', ');
+                                return `<tr><td><strong>${i + 1}</strong></td><td>${nameScoreStr}</td><td><strong>${p.score > 0 ? '+' : ''}${p.score}</strong></td><td style="font-size:0.88em;">${picksHtml}</td><td style="text-align:center;font-weight:600;color:#e67e22;">${tb}</td><td style="text-align:center;">${paidCell}${deleteBtn}</td></tr>`;
                             }).join('')}
                         </tbody>
                     </table>
